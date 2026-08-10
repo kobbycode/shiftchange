@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="100%" height="100%">
+  <defs>
+    <linearGradient id="asempaGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00C853"/>
+      <stop offset="100%" stop-color="#00897B"/>
+    </linearGradient>
+    <filter id="shadowAsempa" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  <rect width="200" height="200" rx="36" fill="url(#asempaGrad)"/>
+  <circle cx="100" cy="100" r="82" fill="none" stroke="#FFD600" stroke-width="3" stroke-dasharray="6 4" opacity="0.7"/>
+  <!-- ASEMPA Text -->
+  <text x="100" y="92" font-family="'Inter', system-ui, sans-serif" font-weight="900" font-size="34" fill="#FFFFFF" text-anchor="middle" filter="url(#shadowAsempa)" letter-spacing="1">ASEMPA</text>
+  <!-- 94.7 FM Pill -->
+  <rect x="36" y="112" width="128" height="32" rx="16" fill="#FFD600"/>
+  <text x="100" y="133" font-family="'Inter', system-ui, sans-serif" font-weight="900" font-size="18" fill="#004D40" text-anchor="middle" letter-spacing="1">94.7 FM</text>
+</svg>
