@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { db } from "@/lib/firestore";
-import { MockDB, Fault, Task, Attendance, OutsideBroadcast, Station, User } from "@/lib/mock-db";
+import { Fault, Task, Attendance, OutsideBroadcast, Station, User } from "@/lib/mock-db";
 import { formatPairName } from "@/lib/pair-utils";
 import { DutyPairBadge } from "@/components/duty-pair-badge";
 import { 
@@ -37,17 +37,17 @@ export default function ReportsPage() {
   const compileReportData = React.useCallback(async (notify = false) => {
     setGenerating(true);
     try {
-      const [allFaults, allTasks, allObs, allUsers, allStations] = await Promise.all([
+      const [allFaults, allTasks, allObs, allUsers, allStations, allAttendance] = await Promise.all([
         db.faults.list(),
         db.tasks.list(),
         db.outsideBroadcasts.list(),
         db.users.list(),
-        db.stations.list()
+        db.stations.list(),
+        db.attendance.list()
       ]);
       
       setStations(allStations);
       setUsers(allUsers);
-      const realAttendance = MockDB.getAttendance();
 
       const start = new Date(startDate).getTime();
       const end = new Date(endDate).getTime() + 86400000; // end of day
@@ -67,15 +67,15 @@ export default function ReportsPage() {
         return t >= start && t <= end;
       });
 
-      const filteredAttendance = realAttendance.filter(att => {
+      const filteredAttendance = allAttendance.filter(att => {
         const t = new Date(att.time_reported).getTime();
         return t >= start && t <= end;
       });
 
       setFaults(filteredFaults);
-      setTasks(filteredTasks.length > 0 ? filteredTasks : allTasks);
+      setTasks(filteredTasks);
       setObs(filteredObs);
-      setAttendance(filteredAttendance.length > 0 ? filteredAttendance : realAttendance);
+      setAttendance(filteredAttendance);
 
       setReportData({
         generatedAt: new Date().toLocaleString(),
