@@ -2196,33 +2196,31 @@ export const db = {
       return MockDB.getTasks();
     },
     async create(task: Omit<Task, "id" | "created_at" | "updated_at">): Promise<Task> {
-      if (isFirestoreConfigured && !firestoreDegraded) {
-        try {
-          const newTask: Task = {
-            ...task,
-            id: `task-${Date.now()}`,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          };
-          await withTimeout(fsSet("tasks", newTask.id, newTask), "tasks create");
-          const mockTasks = MockDB.getTasks();
-          if (!mockTasks.some(t => t.id === newTask.id)) mockTasks.unshift(newTask);
-          MockDB.saveTasks(mockTasks);
-          return newTask;
-        } catch (e) {
-          setFirestoreDegraded();
-          console.warn("Firestore tasks create failed, falling back:", (e as any)?.message);
-        }
-      }
-      const tasks = MockDB.getTasks();
+      // Build and persist the local record first. Tasks are user-authored data and
+      // must survive navigation even when Firestore is slow, offline, or degraded.
       const newTask: Task = {
         ...task,
         id: `task-${Date.now()}`,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
-      tasks.unshift(newTask);
+      const tasks = MockDB.getTasks();
+      if (!tasks.some(t => t.id === newTask.id)) tasks.unshift(newTask);
       MockDB.saveTasks(tasks);
+
+      if (isFirestoreConfigured && !isOffline()) {
+        try {
+          await withTimeout(fsSet("tasks", newTask.id, newTask), "tasks create", FIRESTORE_WRITE_TIMEOUT_MS);
+          resetFirestoreDegraded();
+          return newTask;
+        } catch (e) {
+          setFirestoreDegraded();
+          console.warn("Firestore tasks create failed, queueing for sync:", (e as any)?.message);
+          queuePendingWrite("tasks", newTask.id, newTask);
+        }
+      } else if (isFirestoreConfigured) {
+        queuePendingWrite("tasks", newTask.id, newTask);
+      }
       
       if (task.assigned_to_id) {
         createNotification(
