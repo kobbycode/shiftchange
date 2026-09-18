@@ -2159,6 +2159,14 @@ export const db = {
 
   tasks: {
     async list(): Promise<Task[]> {
+      const localAtStart = MockDB.getTasks();
+      console.info("[tasks.list] start", {
+        localCount: localAtStart.length,
+        localIds: localAtStart.map(t => t.id),
+        firestoreConfigured: isFirestoreConfigured,
+        firestoreDegraded,
+        offline: isOffline(),
+      });
       if (isFirestoreConfigured && !firestoreDegraded) {
         try {
           const data = await withTimeout(fsGetAll("tasks"), "tasks list");
@@ -2180,6 +2188,13 @@ export const db = {
             };
 
             let merged = mergeWithLocal(data as Task[]);
+            console.info("[tasks.list] cloud merge", {
+              cloudCount: data.length,
+              localCount: MockDB.getTasks().length,
+              mergedCount: merged.length,
+              cloudIds: data.map((t: any) => t.id),
+              mergedIds: merged.map(t => t.id),
+            });
             // Yield once and merge again so a local task written by another in-flight
             // operation in this turn is included before we update the mirror.
             await Promise.resolve();
@@ -2193,7 +2208,12 @@ export const db = {
           console.warn("Firestore tasks list failed, falling back:", (e as any)?.message);
         }
       }
-      return MockDB.getTasks();
+      const fallbackTasks = MockDB.getTasks();
+      console.info("[tasks.list] local fallback", {
+        count: fallbackTasks.length,
+        ids: fallbackTasks.map(t => t.id),
+      });
+      return fallbackTasks;
     },
     async create(task: Omit<Task, "id" | "created_at" | "updated_at">): Promise<Task> {
       // Build and persist the local record first. Tasks are user-authored data and
