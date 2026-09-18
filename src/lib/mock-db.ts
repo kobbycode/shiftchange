@@ -368,6 +368,12 @@ const setStorageItem = <T>(key: string, data: T) => {
     console.trace("[shift_tasks write caller]");
   }
   localStorage.setItem(key, next);
+  if (key === "shift_tasks") {
+    // Persist the latest task snapshot in sessionStorage too. This protects
+    // user-authored tasks from an unexpected localStorage removal while the
+    // current tab is alive and gives getTasks() a self-healing source.
+    sessionStorage.setItem("shift_tasks_session_backup", next);
+  }
   if (key.startsWith("shift_")) {
     window.dispatchEvent(new CustomEvent("shift_data_changed", { detail: { key } }));
     if (broadcastChan) {
@@ -489,7 +495,23 @@ export class MockDB {
   }
 
   static getTasks(): Task[] {
-    return getStorageItem("shift_tasks", seedTasks);
+    const tasks = getStorageItem("shift_tasks", seedTasks);
+    if (tasks.length > 0 || typeof window === "undefined") return tasks;
+
+    // If localStorage was unexpectedly removed during this tab's lifetime,
+    // recover the last task snapshot. A legitimate explicit save of [] updates
+    // this backup too, so intentional empty task sets stay empty.
+    try {
+      const raw = sessionStorage.getItem("shift_tasks_session_backup");
+      if (!raw) return tasks;
+      const backup = JSON.parse(raw) as Task[];
+      if (!Array.isArray(backup) || backup.length === 0) return tasks;
+      localStorage.setItem("shift_tasks", raw);
+      console.warn("[shift_tasks] recovered", backup.length, "task(s) from session backup");
+      return backup;
+    } catch {
+      return tasks;
+    }
   }
 
   static saveTasks(tasks: Task[]) {
