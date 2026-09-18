@@ -112,8 +112,29 @@ export default function ReportsPage() {
       });
 
       if (notify) {
+        console.info("Report data diagnostics", {
+          range: { startDate, endDate, start, endExclusive },
+          raw: {
+            attendance: allAttendance.length,
+            faults: allFaults.length,
+            obs: allObs.length,
+            tasks: allTasks.length,
+          },
+          filtered: {
+            attendance: filteredAttendance.length,
+            faults: filteredFaults.length,
+            obs: filteredObs.length,
+            tasks: filteredTasks.length,
+          },
+          taskTimestamps: allTasks.map(task => ({
+            id: task.id,
+            task_name: task.task_name,
+            created_at: task.created_at,
+          })),
+        });
         toast.success(
-          `Report generated: ${filteredAttendance.length} attendance, ${filteredFaults.length} faults, ${filteredObs.length} OBs, ${filteredTasks.length} tasks.`
+          `Report: ${filteredAttendance.length}/${allAttendance.length} attendance, ${filteredFaults.length}/${allFaults.length} faults, ${filteredObs.length}/${allObs.length} OBs, ${filteredTasks.length}/${allTasks.length} tasks (in range/loaded).`,
+          { duration: 7000 }
         );
       }
     } catch (err) {
