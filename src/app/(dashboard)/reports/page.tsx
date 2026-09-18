@@ -2,12 +2,11 @@
 
 import * as React from "react";
 import { db } from "@/lib/firestore";
-import { MockDB, Fault, Task, Attendance, OutsideBroadcast, Station, User } from "@/lib/mock-db";
-import { formatPairName } from "@/lib/pair-utils";
+import { Fault, Task, Attendance, OutsideBroadcast, Station, User } from "@/lib/mock-db";
 import { DutyPairBadge } from "@/components/duty-pair-badge";
 import { 
-  FileBarChart, Calendar, Download, Printer, Search, 
-  Users, AlertTriangle, Compass, ClipboardList, CheckCircle, Radio
+  FileBarChart, Calendar, Download, Printer,
+  Users, AlertTriangle, Compass, ClipboardList
 } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -34,57 +33,113 @@ export default function ReportsPage() {
     return u && u.role === "Technician";
   });
 
+  const applyReportSchedule = (type: "Daily" | "Weekly" | "Monthly" | "Custom") => {
+    setReportType(type);
+    if (type === "Custom") return;
+
+    const today = new Date();
+    const toDateInput = (date: Date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    };
+
+    const start = new Date(today);
+    const end = new Date(today);
+
+    if (type === "Weekly") {
+      const day = today.getDay();
+      const mondayOffset = day === 0 ? -6 : 1 - day;
+      start.setDate(today.getDate() + mondayOffset);
+    } else if (type === "Monthly") {
+      start.setDate(1);
+    }
+
+    setStartDate(toDateInput(start));
+    setEndDate(toDateInput(end));
+  };
+
   const compileReportData = React.useCallback(async (notify = false) => {
     setGenerating(true);
     try {
-      const [allFaults, allTasks, allObs, allUsers, allStations] = await Promise.all([
+      const [allFaults, allTasks, allObs, allUsers, allStations, allAttendance] = await Promise.all([
         db.faults.list(),
         db.tasks.list(),
         db.outsideBroadcasts.list(),
         db.users.list(),
-        db.stations.list()
+        db.stations.list(),
+        db.attendance.list()
       ]);
       
       setStations(allStations);
       setUsers(allUsers);
-      const realAttendance = MockDB.getAttendance();
 
-      const start = new Date(startDate).getTime();
-      const end = new Date(endDate).getTime() + 86400000; // end of day
+      // Parse date inputs as local calendar days. new Date("YYYY-MM-DD") is UTC,
+      // which can shift the reporting window relative to locally-created records.
+      const parseLocalDate = (value: string) => {
+        const [year, month, day] = value.split("-").map(Number);
+        return new Date(year, month - 1, day);
+      };
+      const start = parseLocalDate(startDate).getTime();
+      const endExclusiveDate = parseLocalDate(endDate);
+      endExclusiveDate.setDate(endExclusiveDate.getDate() + 1);
+      const endExclusive = endExclusiveDate.getTime();
 
-      const filteredFaults = allFaults.filter(f => {
-        const t = new Date(f.time_detected).getTime();
-        return t >= start && t <= end;
-      });
+      if (!Number.isFinite(start) || !Number.isFinite(endExclusive) || start >= endExclusive) {
+        throw new Error("Invalid report date range");
+      }
 
-      const filteredObs = allObs.filter(o => {
-        const t = new Date(o.created_at).getTime();
-        return t >= start && t <= end;
-      });
+      const inRange = (value?: string | null) => {
+        if (!value) return false;
+        const timestamp = new Date(value).getTime();
+        return Number.isFinite(timestamp) && timestamp >= start && timestamp < endExclusive;
+      };
 
-      const filteredTasks = allTasks.filter(tk => {
-        const t = new Date(tk.created_at || Date.now()).getTime();
-        return t >= start && t <= end;
-      });
-
-      const filteredAttendance = realAttendance.filter(att => {
-        const t = new Date(att.time_reported).getTime();
-        return t >= start && t <= end;
-      });
+      const filteredFaults = allFaults.filter(f => inRange(f.time_detected));
+      const filteredObs = allObs.filter(o => inRange(o.created_at));
+      const filteredTasks = allTasks.filter(tk => inRange(tk.created_at));
+      const filteredAttendance = allAttendance.filter(att => inRange(att.time_reported));
 
       setFaults(filteredFaults);
-      setTasks(filteredTasks.length > 0 ? filteredTasks : allTasks);
+      setTasks(filteredTasks);
       setObs(filteredObs);
-      setAttendance(filteredAttendance.length > 0 ? filteredAttendance : realAttendance);
+      setAttendance(filteredAttendance);
 
       setReportData({
         generatedAt: new Date().toLocaleString(),
         summary: `This operational report details the technical department logs, transmission health indexes, and engineer shifts recorded between ${startDate} and ${endDate}.`,
       });
 
-      if (notify) toast.success("Operations report generated from live database!");
+      if (notify) {
+        console.info("Report data diagnostics", {
+          range: { startDate, endDate, start, endExclusive },
+          raw: {
+            attendance: allAttendance.length,
+            faults: allFaults.length,
+            obs: allObs.length,
+            tasks: allTasks.length,
+          },
+          filtered: {
+            attendance: filteredAttendance.length,
+            faults: filteredFaults.length,
+            obs: filteredObs.length,
+            tasks: filteredTasks.length,
+          },
+          taskTimestamps: allTasks.map(task => ({
+            id: task.id,
+            task_name: task.task_name,
+            created_at: task.created_at,
+          })),
+        });
+        toast.success(
+          `Report: ${filteredAttendance.length}/${allAttendance.length} attendance, ${filteredFaults.length}/${allFaults.length} faults, ${filteredObs.length}/${allObs.length} OBs, ${filteredTasks.length}/${allTasks.length} tasks (in range/loaded).`,
+          { duration: 7000 }
+        );
+      }
     } catch (err) {
-      if (notify) toast.error("Failed to compile report metrics.");
+      console.error("Failed to compile report metrics:", err);
+      if (notify) toast.error("Failed to compile report metrics. Check the browser console for details.");
     } finally {
       setGenerating(false);
     }
@@ -369,7 +424,7 @@ export default function ReportsPage() {
             <label className="font-semibold text-foreground">Report Schedule Type</label>
             <select
               value={reportType}
-              onChange={(e) => setReportType(e.target.value as any)}
+              onChange={(e) => applyReportSchedule(e.target.value as "Daily" | "Weekly" | "Monthly" | "Custom")}
               className="w-full px-3 py-1.5 bg-card border border-border rounded-lg text-foreground font-medium outline-none"
             >
               <option value="Daily" className="bg-card text-foreground">Daily Report</option>
@@ -386,7 +441,10 @@ export default function ReportsPage() {
             <input
               type="date"
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              onChange={(e) => {
+                setReportType("Custom");
+                setStartDate(e.target.value);
+              }}
               className="w-full px-3 py-1.5 bg-card border border-border rounded-lg text-foreground font-medium cursor-pointer outline-none"
               required
             />
@@ -399,7 +457,10 @@ export default function ReportsPage() {
             <input
               type="date"
               value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
+              onChange={(e) => {
+                setReportType("Custom");
+                setEndDate(e.target.value);
+              }}
               className="w-full px-3 py-1.5 bg-card border border-border rounded-lg text-foreground font-medium cursor-pointer outline-none"
               required
             />
@@ -457,7 +518,11 @@ export default function ReportsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/20 text-muted-foreground">
-                {technicianAttendance.map((att) => {
+                {technicianAttendance.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-3 text-center text-zinc-500 italic">No technician attendance recorded in this date range.</td>
+                  </tr>
+                ) : technicianAttendance.map((att) => {
                   const checkInMins = new Date(att.time_reported).getHours() * 60 + new Date(att.time_reported).getMinutes();
                   const lateBy = checkInMins - (8 * 60);
                   const checkOutMins = att.time_leaving
@@ -624,7 +689,11 @@ export default function ReportsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/20 text-muted-foreground">
-                {tasks.map((task) => (
+                {tasks.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="py-3 text-center text-zinc-500 italic">No maintenance tasks recorded in this date range.</td>
+                  </tr>
+                ) : tasks.map((task) => (
                   <tr key={task.id}>
                     <td className="py-2 font-semibold text-foreground">{task.task_name}</td>
                     <td className="py-2">

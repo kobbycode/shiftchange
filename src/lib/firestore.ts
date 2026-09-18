@@ -435,15 +435,15 @@ async function checkFactoryResetMarker() {
   if (storedVersion === cloudVersion) return;
   if (sessionStorage.getItem(RESET_RELOADED_KEY) === cloudVersion) return;
   if (storedVersion === null) {
-    // First visit after a factory reset (or brand-new device): the cloud DB was
-    // wiped, so we MUST purge stale local mirrors from before the reset. A
-    // device with no mirrors has nothing to purge — just record the version
-    // and keep the page (no jarring mid-session reload).
-    const hasMirrors = OPERATIONAL_CACHE_KEYS.some(k => localStorage.getItem(k) !== null);
+    // This device has never observed a reset marker before. Treat the current
+    // cloud marker as its baseline instead of deleting local operational data:
+    // there is no previous marker on this device to prove those local rows
+    // pre-date the reset. Purging here can erase a task/job created moments
+    // earlier while this asynchronous marker check is still in flight.
+    //
+    // A real future reset is still detected below because storedVersion will
+    // then differ from the newly fetched cloudVersion.
     rememberResetVersion(cloudVersion);
-    if (!hasMirrors) return;
-    OPERATIONAL_CACHE_KEYS.forEach(k => localStorage.removeItem(k));
-    window.location.reload();
     return;
   }
   // Cloud DB was wiped since our last visit — drop stale local mirrors AND the
@@ -2159,15 +2159,46 @@ export const db = {
 
   tasks: {
     async list(): Promise<Task[]> {
+      const localAtStart = MockDB.getTasks();
+      console.info("[tasks.list] start", {
+        localCount: localAtStart.length,
+        localIds: localAtStart.map(t => t.id),
+        firestoreConfigured: isFirestoreConfigured,
+        firestoreDegraded,
+        offline: isOffline(),
+      });
       if (isFirestoreConfigured && !firestoreDegraded) {
         try {
           const data = await withTimeout(fsGetAll("tasks"), "tasks list");
           if (data) {
-            // Sync the local mirror so fallback reads never show stale pending tasks
-            const mockTasks = MockDB.getTasks();
-            const cloudIds = new Set(data.map(t => t.id));
-            const merged = [...(data as Task[]), ...mockTasks.filter(t => !cloudIds.has(t.id))]
-              .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+            // Merge cloud tasks with the local mirror. Re-read the mirror immediately
+            // before saving because other concurrent list() calls can complete while the
+            // Firestore request is in flight and local/offline task creation must never be
+            // overwritten by an older snapshot.
+            const mergeWithLocal = (cloudTasks: Task[]) => {
+              const localTasks = MockDB.getTasks();
+              const byId = new Map<string, Task>();
+              for (const task of cloudTasks) byId.set(task.id, task);
+              for (const task of localTasks) {
+                if (!byId.has(task.id)) byId.set(task.id, task);
+              }
+              return Array.from(byId.values()).sort(
+                (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              );
+            };
+
+            let merged = mergeWithLocal(data as Task[]);
+            console.info("[tasks.list] cloud merge", {
+              cloudCount: data.length,
+              localCount: MockDB.getTasks().length,
+              mergedCount: merged.length,
+              cloudIds: data.map((t: any) => t.id),
+              mergedIds: merged.map(t => t.id),
+            });
+            // Yield once and merge again so a local task written by another in-flight
+            // operation in this turn is included before we update the mirror.
+            await Promise.resolve();
+            merged = mergeWithLocal(merged);
             MockDB.saveTasks(merged);
             return merged;
           }
@@ -2177,36 +2208,39 @@ export const db = {
           console.warn("Firestore tasks list failed, falling back:", (e as any)?.message);
         }
       }
-      return MockDB.getTasks();
+      const fallbackTasks = MockDB.getTasks();
+      console.info("[tasks.list] local fallback", {
+        count: fallbackTasks.length,
+        ids: fallbackTasks.map(t => t.id),
+      });
+      return fallbackTasks;
     },
     async create(task: Omit<Task, "id" | "created_at" | "updated_at">): Promise<Task> {
-      if (isFirestoreConfigured && !firestoreDegraded) {
-        try {
-          const newTask: Task = {
-            ...task,
-            id: `task-${Date.now()}`,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          };
-          await withTimeout(fsSet("tasks", newTask.id, newTask), "tasks create");
-          const mockTasks = MockDB.getTasks();
-          if (!mockTasks.some(t => t.id === newTask.id)) mockTasks.unshift(newTask);
-          MockDB.saveTasks(mockTasks);
-          return newTask;
-        } catch (e) {
-          setFirestoreDegraded();
-          console.warn("Firestore tasks create failed, falling back:", (e as any)?.message);
-        }
-      }
-      const tasks = MockDB.getTasks();
+      // Build and persist the local record first. Tasks are user-authored data and
+      // must survive navigation even when Firestore is slow, offline, or degraded.
       const newTask: Task = {
         ...task,
         id: `task-${Date.now()}`,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
-      tasks.unshift(newTask);
+      const tasks = MockDB.getTasks();
+      if (!tasks.some(t => t.id === newTask.id)) tasks.unshift(newTask);
       MockDB.saveTasks(tasks);
+
+      if (isFirestoreConfigured && !isOffline()) {
+        try {
+          await withTimeout(fsSet("tasks", newTask.id, newTask), "tasks create", FIRESTORE_WRITE_TIMEOUT_MS);
+          resetFirestoreDegraded();
+          return newTask;
+        } catch (e) {
+          setFirestoreDegraded();
+          console.warn("Firestore tasks create failed, queueing for sync:", (e as any)?.message);
+          queuePendingWrite("tasks", newTask.id, newTask);
+        }
+      } else if (isFirestoreConfigured) {
+        queuePendingWrite("tasks", newTask.id, newTask);
+      }
       
       if (task.assigned_to_id) {
         createNotification(

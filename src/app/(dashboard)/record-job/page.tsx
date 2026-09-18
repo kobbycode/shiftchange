@@ -18,7 +18,7 @@ export default function RecordJobPage() {
   const [loading, setLoading] = React.useState(true);
   const [showForm, setShowForm] = React.useState(false);
   const [dateFilter, setDateFilter] = React.useState("");
-  const [activeTimer, setActiveTimer] = React.useState<{ id: string; start: Date } | null>(null);
+  const [activeTimer, setActiveTimer] = React.useState<{ start: Date } | null>(null);
   const [timerSeconds, setTimerSeconds] = React.useState(0);
 
   React.useEffect(() => {
@@ -116,9 +116,10 @@ export default function RecordJobPage() {
             setShowForm(false);
             setActiveTimer(null);
           }}
-          onCancel={() => setShowForm(false)}
+          onCancel={() => { setShowForm(false); setActiveTimer(null); }}
           timerActive={activeTimer}
-          onStartTimer={(id, start) => setActiveTimer({ id, start })}
+          onStartTimer={(start) => setActiveTimer({ start })}
+          onStopTimer={() => setActiveTimer(null)}
         />
       )}
 
@@ -146,7 +147,6 @@ export default function RecordJobPage() {
         ) : (
           filtered.map((job) => {
             const u = users.find((x) => x.id === job.user_id);
-            const isRunning = activeTimer?.id === job.id;
             return (
               <div
                 key={job.id}
@@ -190,13 +190,14 @@ export default function RecordJobPage() {
 }
 
 function JobForm({
-  user, onSave, onCancel, timerActive, onStartTimer,
+  user, onSave, onCancel, timerActive, onStartTimer, onStopTimer,
 }: {
   user: { id: string; name: string };
   onSave: (job: JobRecord) => void;
   onCancel: () => void;
-  timerActive: { id: string; start: Date } | null;
-  onStartTimer: (id: string, start: Date) => void;
+  timerActive: { start: Date } | null;
+  onStartTimer: (start: Date) => void;
+  onStopTimer: () => void;
 }) {
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
@@ -247,9 +248,8 @@ function JobForm({
 
   const handleStartTimer = () => {
     const now = new Date();
-    const id = `timer-${Date.now()}`;
     setStartTime(now.toISOString().slice(0, 16));
-    onStartTimer(id, now);
+    onStartTimer(now);
     setUseTimer(true);
     toast.success("Timer started");
   };
@@ -258,6 +258,7 @@ function JobForm({
     const now = new Date();
     setEndTime(now.toISOString().slice(0, 16));
     setUseTimer(false);
+    onStopTimer();
   };
 
   return (
