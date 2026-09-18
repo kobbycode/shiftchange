@@ -435,15 +435,15 @@ async function checkFactoryResetMarker() {
   if (storedVersion === cloudVersion) return;
   if (sessionStorage.getItem(RESET_RELOADED_KEY) === cloudVersion) return;
   if (storedVersion === null) {
-    // First visit after a factory reset (or brand-new device): the cloud DB was
-    // wiped, so we MUST purge stale local mirrors from before the reset. A
-    // device with no mirrors has nothing to purge — just record the version
-    // and keep the page (no jarring mid-session reload).
-    const hasMirrors = OPERATIONAL_CACHE_KEYS.some(k => localStorage.getItem(k) !== null);
+    // This device has never observed a reset marker before. Treat the current
+    // cloud marker as its baseline instead of deleting local operational data:
+    // there is no previous marker on this device to prove those local rows
+    // pre-date the reset. Purging here can erase a task/job created moments
+    // earlier while this asynchronous marker check is still in flight.
+    //
+    // A real future reset is still detected below because storedVersion will
+    // then differ from the newly fetched cloudVersion.
     rememberResetVersion(cloudVersion);
-    if (!hasMirrors) return;
-    OPERATIONAL_CACHE_KEYS.forEach(k => localStorage.removeItem(k));
-    window.location.reload();
     return;
   }
   // Cloud DB was wiped since our last visit — drop stale local mirrors AND the
