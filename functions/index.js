@@ -170,9 +170,47 @@ exports.verifyPin = onCall(
     const userDoc = await db.collection("users").doc(candidateUserId).get();
     if (!userDoc.exists) return { ok: false, error: "User not found." };
     const u = userDoc.data();
+    // Promote the verified app identity into a Firebase Auth identity.
+    // The caller begins as an anonymous Firebase user so it can invoke this
+    // function before app login. After the PIN is verified, mint a custom
+    // token whose role claim satisfies the operational Firestore rules.
+    //
+    // Use a deterministic UID derived from the app user id instead of the
+    // temporary anonymous UID. This gives the same station user one Firebase
+    // identity across browsers/devices and lets server-side mappings resolve
+    // the authenticated caller reliably.
+    const authUid = `shift_${candidateUserId}`;
+    const auth = getAuth();
+    try {
+      await auth.getUser(authUid);
+    } catch (err) {
+      if (err && err.code === "auth/user-not-found") {
+        await auth.createUser({
+          uid: authUid,
+          displayName: u.name || candidateUserId,
+          ...(u.email ? { email: u.email } : {})
+        });
+      } else {
+        throw err;
+      }
+    }
+    await auth.setCustomUserClaims(authUid, {
+      role: u.role,
+      appUserId: candidateUserId
+    });
+    await db.collection("auth_uids").doc(authUid).set({
+      user_id: candidateUserId,
+      updated_at: new Date().toISOString()
+    }, { merge: true });
+    const customToken = await auth.createCustomToken(authUid, {
+      role: u.role,
+      appUserId: candidateUserId
+    });
+
     audit(candidateUserId, "PIN_VERIFIED", "users", candidateUserId, "PIN verified server-side");
     return {
       ok: true,
+      customToken,
       user: { id: userDoc.id, name: u.name, role: u.role, email: u.email || "" }
     };
   }
