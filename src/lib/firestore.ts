@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, signInAnonymously, createUserWithEmailAndPassword, signInWithEmailAndPassword, reauthenticateWithCredential, updatePassword, EmailAuthProvider } from "firebase/auth";
+import { getAuth, signInAnonymously, signInWithCustomToken, createUserWithEmailAndPassword, signInWithEmailAndPassword, reauthenticateWithCredential, updatePassword, EmailAuthProvider } from "firebase/auth";
 import {
   initializeFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc,
   Firestore
@@ -763,7 +763,23 @@ export const db = {
       const res = await callCloudFunction("verifyPin", { userId, pin });
       if (res === null) return { ok: false, unavailable: true };
       if (res.locked) return { ok: false, locked: true, error: res.error };
-      if (res.ok && res.user) return { ok: true, user: res.user };
+      if (res.ok && res.user && res.customToken) {
+        try {
+          const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+          const auth = getAuth(app);
+          await withTimeout(signInWithCustomToken(auth, res.customToken), "role sign-in", FIRESTORE_WRITE_TIMEOUT_MS);
+          // The cached anonymous-auth promise represented the old identity.
+          // Reset it so later callers observe the newly authenticated user.
+          _anonAuthPromise = null;
+          return { ok: true, user: res.user };
+        } catch (e) {
+          console.warn("Role sign-in failed:", (e as any)?.message || e);
+          return { ok: false, error: "PIN verified, but the secure Firebase session could not be established." };
+        }
+      }
+      if (res.ok && res.user) {
+        return { ok: false, error: "PIN verified, but the server did not issue a secure Firebase session." };
+      }
       return { ok: false, error: res.error || "Invalid PIN." };
     },
 
