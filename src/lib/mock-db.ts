@@ -363,6 +363,10 @@ const setStorageItem = <T>(key: string, data: T) => {
   // an unbounded loop.
   const prev = localStorage.getItem(key);
   if (prev === next) return;
+  if (key === "shift_tasks") {
+    console.info("[shift_tasks write]", { previous: prev, next });
+    console.trace("[shift_tasks write caller]");
+  }
   localStorage.setItem(key, next);
   if (key.startsWith("shift_")) {
     window.dispatchEvent(new CustomEvent("shift_data_changed", { detail: { key } }));
