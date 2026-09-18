@@ -19,6 +19,8 @@ interface QueuedReport {
   image_url: string;
   priority: FaultPriority;
   created_at: string;
+  shift_id?: string;
+  user_id?: string;
   synced: boolean;
 }
 
@@ -82,10 +84,10 @@ export function QRScanner() {
       for (const report of queue) {
         try {
           await db.tasks.create({
-            shift_id: activeShift?.id,
+            shift_id: report.shift_id,
             task_name: `Equipment Fault: ${report.equipment_name}`,
             description: report.description,
-            assigned_to_id: user?.id,
+            assigned_to_id: report.user_id,
             priority: report.priority,
             station_id: undefined,
             status: "Todo",
@@ -141,7 +143,8 @@ export function QRScanner() {
   const loadEquipment = async (eqId: string) => {
     try {
       const all = await db.equipment.list();
-      const found = all.find(e => e.id === eqId || e.name.toLowerCase().includes(eqId.toLowerCase()));
+      const normalized = eqId.trim().toLowerCase();
+      const found = all.find(e => e.id.toLowerCase() === normalized);
       if (found) {
         setEquipmentInfo(found);
       } else {
@@ -195,6 +198,8 @@ export function QRScanner() {
         image_url: uploadedUrl || "",
         priority,
         created_at: new Date().toISOString(),
+        shift_id: activeShift?.id,
+        user_id: user?.id,
         synced: false,
       });
       saveOfflineQueue(queue);
@@ -230,6 +235,8 @@ export function QRScanner() {
         image_url: uploadedUrl || "",
         priority,
         created_at: new Date().toISOString(),
+        shift_id: activeShift?.id,
+        user_id: user?.id,
         synced: false,
       });
       saveOfflineQueue(queue);
