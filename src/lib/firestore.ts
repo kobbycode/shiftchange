@@ -2163,11 +2163,27 @@ export const db = {
         try {
           const data = await withTimeout(fsGetAll("tasks"), "tasks list");
           if (data) {
-            // Sync the local mirror so fallback reads never show stale pending tasks
-            const mockTasks = MockDB.getTasks();
-            const cloudIds = new Set(data.map(t => t.id));
-            const merged = [...(data as Task[]), ...mockTasks.filter(t => !cloudIds.has(t.id))]
-              .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+            // Merge cloud tasks with the local mirror. Re-read the mirror immediately
+            // before saving because other concurrent list() calls can complete while the
+            // Firestore request is in flight and local/offline task creation must never be
+            // overwritten by an older snapshot.
+            const mergeWithLocal = (cloudTasks: Task[]) => {
+              const localTasks = MockDB.getTasks();
+              const byId = new Map<string, Task>();
+              for (const task of cloudTasks) byId.set(task.id, task);
+              for (const task of localTasks) {
+                if (!byId.has(task.id)) byId.set(task.id, task);
+              }
+              return Array.from(byId.values()).sort(
+                (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              );
+            };
+
+            let merged = mergeWithLocal(data as Task[]);
+            // Yield once and merge again so a local task written by another in-flight
+            // operation in this turn is included before we update the mirror.
+            await Promise.resolve();
+            merged = mergeWithLocal(merged);
             MockDB.saveTasks(merged);
             return merged;
           }
